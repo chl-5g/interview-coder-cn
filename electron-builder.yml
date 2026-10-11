@@ -1,5 +1,5 @@
 appId: com.electron.app
-productName: 截屏解题助手
+productName: Electron
 directories:
   buildResources: build
 files:
@@ -15,7 +15,7 @@ extraResources:
   - from: scripts/local_asr_worker.py
     to: scripts/local_asr_worker.py
 win:
-  executableName: 截屏解题助手
+  executableName: Electron
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
