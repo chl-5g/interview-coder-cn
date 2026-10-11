@@ -36,9 +36,9 @@ function resolveModel(): string | null {
   return candidates.find((p) => existsSync(p)) || null
 }
 function getWorkerScript(): string {
-  return app.isPackaged
-    ? join(process.resourcesPath, 'scripts', 'local_asr_worker.py')
-    : join(fileURLToPath(new URL('.', import.meta.url)), '../../scripts/local_asr_worker.py')
+  const bundled = join(process.resourcesPath, 'scripts', 'local_asr_worker.py')
+  if (existsSync(bundled)) return bundled
+  return join(fileURLToPath(new URL('.', import.meta.url)), '../../scripts/local_asr_worker.py')
 }
 function cleanup() {
   if (worker && !worker.killed) worker.kill('SIGTERM')
