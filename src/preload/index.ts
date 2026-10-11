@@ -368,8 +368,8 @@ const api = {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 
   // Transcription
-  startTranscription: (apiKey: string, options?: TranscriptionOptions) =>
-    ipcRenderer.invoke('start-transcription', apiKey, options),
+  startTranscription: (options?: TranscriptionOptions) =>
+    ipcRenderer.invoke('start-transcription', options),
   stopTranscription: () => ipcRenderer.invoke('stop-transcription'),
   sendTranscriptionAudioChunk: (chunk: ArrayBuffer) =>
     ipcRenderer.send('transcription-audio-chunk', chunk),

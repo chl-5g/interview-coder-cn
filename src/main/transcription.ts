@@ -1,236 +1,80 @@
-import { ipcMain } from 'electron'
-import WebSocket from 'ws'
-import { randomUUID } from 'node:crypto'
+import { app, ipcMain } from 'electron'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const WS_URL = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference/'
-
-let ws: WebSocket | null = null
-let taskId: string | null = null
+let worker: ChildProcessWithoutNullStreams | null = null
 let isTranscribing = false
-let taskStarted = false
+let workerReady = false
+let purpose: TranscriptionPurpose = 'screenshot'
 let accumulatedText = ''
 let currentPartial = ''
+let inputBuffer = ''
 
 export type TranscriptionPurpose = 'screenshot' | 'conversation'
-
-export interface TranscriptionOptions {
-  /**
-   * 截图模式 collects the text for the next screenshot; 对话模式 hands every
-   * sentence to conversation.ts instead, leaving 截图模式's text untouched
-   */
-  purpose?: TranscriptionPurpose
-  /** Silence (ms) that ends a sentence; the recogniser's default (1300ms) when absent */
-  maxSentenceSilence?: number
-}
-
-let purpose: TranscriptionPurpose = 'screenshot'
-
+export interface TranscriptionOptions { purpose?: TranscriptionPurpose; maxSentenceSilence?: number }
 type SentenceListener = (text: string, final: boolean) => void
 const sentenceListeners = new Set<SentenceListener>()
 const endListeners = new Set<() => void>()
 
-/** 对话模式: every revision of the sentence being spoken, and its final text */
-export function onConversationSentence(listener: SentenceListener): void {
-  sentenceListeners.add(listener)
-}
-
-/** Recognition stopped, for whatever reason */
-export function onTranscriptionEnd(listener: () => void): void {
-  endListeners.add(listener)
-}
-
-export function isTranscriptionRunning(purposeWanted: TranscriptionPurpose): boolean {
-  return isTranscribing && purpose === purposeWanted
-}
-
-/** Tell the renderer and the listeners in main that recognition has stopped */
-function reportStopped() {
-  sendToRenderer('transcription-stopped')
-  endListeners.forEach((listener) => listener())
-}
-
+export function onConversationSentence(listener: SentenceListener): void { sentenceListeners.add(listener) }
+export function onTranscriptionEnd(listener: () => void): void { endListeners.add(listener) }
+export function isTranscriptionRunning(wanted: TranscriptionPurpose): boolean { return isTranscribing && purpose === wanted }
 function sendToRenderer(channel: string, ...args: unknown[]) {
   const mainWindow = global.mainWindow
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(channel, ...args)
-  }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
 }
-
+function reportStopped() { sendToRenderer('transcription-stopped'); endListeners.forEach((listener) => listener()) }
+function resolvePython(): string {
+  const candidates = [process.env.INTERVIEW_CODER_PYTHON, join(homedir(), 'fujian-social-insurance-assistant/.venv-voice/bin/python'), 'python3'].filter(Boolean) as string[]
+  return candidates.find((p) => p === 'python3' || existsSync(p)) || 'python3'
+}
+function resolveModel(): string | null {
+  const candidates = [process.env.INTERVIEW_CODER_WHISPER_MODEL, join(homedir(), 'fujian-social-insurance-assistant/data/voice-models/whisper-small')].filter(Boolean) as string[]
+  return candidates.find((p) => existsSync(p)) || null
+}
+function getWorkerScript(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'scripts', 'local_asr_worker.py')
+    : join(fileURLToPath(new URL('.', import.meta.url)), '../../scripts/local_asr_worker.py')
+}
 function cleanup() {
-  if (ws) {
-    ws.removeAllListeners()
-    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-      ws.close()
-    }
-    ws = null
-  }
-  taskId = null
-  isTranscribing = false
-  taskStarted = false
+  if (worker && !worker.killed) worker.kill('SIGTERM')
+  worker = null; workerReady = false; isTranscribing = false; inputBuffer = ''
 }
-
-function startTranscription(apiKey: string, options: TranscriptionOptions = {}) {
+function handleWorkerLine(line: string) {
+  try {
+    const msg = JSON.parse(line) as { type: string; text?: string; final?: boolean; message?: string }
+    if (msg.type === 'ready') { workerReady = true; return }
+    if (msg.type === 'error') { sendToRenderer('transcription-error', msg.message || '本地语音识别失败'); return }
+    if (msg.type !== 'result' || !msg.text) return
+    const text = msg.text
+    if (purpose === 'conversation') { sentenceListeners.forEach((listener) => listener(text, msg.final !== false)); return }
+    if (msg.final !== false) { accumulatedText += text; currentPartial = '' } else currentPartial = text
+    sendToRenderer('transcription-text', { text: getTranscriptionText(), isPartial: msg.final === false })
+  } catch (err) { console.error('Failed to parse local ASR result:', err) }
+}
+function startTranscription(options: TranscriptionOptions = {}) {
   if (isTranscribing) return
-
-  cleanup()
+  const model = resolveModel()
+  if (!model) { sendToRenderer('transcription-error', '找不到本地 Whisper 模型。请设置 INTERVIEW_CODER_WHISPER_MODEL。'); return }
+  purpose = options.purpose ?? 'screenshot'; accumulatedText = ''; currentPartial = ''
+  worker = spawn(resolvePython(), [getWorkerScript(), '--model', model], { stdio: ['pipe', 'pipe', 'pipe'] })
   isTranscribing = true
-  purpose = options.purpose ?? 'screenshot'
-  taskId = randomUUID()
-  const silence = options.maxSentenceSilence
-
-  ws = new WebSocket(WS_URL, {
-    headers: { Authorization: `bearer ${apiKey}` }
-  })
-
-  ws.on('open', () => {
-    const runTask = {
-      header: {
-        action: 'run-task',
-        task_id: taskId,
-        streaming: 'duplex'
-      },
-      payload: {
-        task_group: 'audio',
-        task: 'asr',
-        function: 'recognition',
-        model: 'fun-asr-realtime',
-        parameters: {
-          format: 'pcm',
-          sample_rate: 16000,
-          // The recogniser accepts 200–6000ms
-          ...(silence ? { max_sentence_silence: Math.min(6000, Math.max(200, silence)) } : {})
-        },
-        input: {}
-      }
-    }
-    ws!.send(JSON.stringify(runTask))
-  })
-
-  ws.on('message', (data: WebSocket.Data) => {
-    try {
-      const msg = JSON.parse(data.toString())
-      const event = msg.header?.event
-
-      if (event === 'task-started') {
-        taskStarted = true
-        return
-      }
-
-      if (event === 'result-generated') {
-        const sentence = msg.payload?.output?.sentence
-        if (!sentence) return
-
-        const text: string = sentence.text || ''
-        const sentenceEnd: boolean = sentence.sentence_end === true
-
-        if (purpose === 'conversation') {
-          sentenceListeners.forEach((listener) => listener(text, sentenceEnd))
-          return
-        }
-
-        if (sentenceEnd) {
-          if (text) {
-            accumulatedText += (accumulatedText ? '' : '') + text
-          }
-          currentPartial = ''
-        } else {
-          currentPartial = text
-        }
-
-        sendToRenderer('transcription-text', {
-          text: getTranscriptionText(),
-          isPartial: !sentenceEnd
-        })
-        return
-      }
-
-      if (event === 'task-failed') {
-        const errorMsg = msg.header?.error_message || '语音识别失败'
-        console.error('Transcription task failed:', errorMsg)
-        sendToRenderer('transcription-error', errorMsg)
-        cleanup()
-        reportStopped()
-        return
-      }
-
-      if (event === 'task-finished') {
-        cleanup()
-        reportStopped()
-      }
-    } catch (e) {
-      console.error('Failed to parse transcription message:', e)
-    }
-  })
-
-  ws.on('error', (err) => {
-    console.error('Transcription WebSocket error:', err)
-    sendToRenderer('transcription-error', err.message || 'WebSocket 连接失败')
-    cleanup()
-    reportStopped()
-  })
-
-  ws.on('close', () => {
-    if (isTranscribing) {
-      isTranscribing = false
-      reportStopped()
-    }
-    ws = null
-    taskStarted = false
-  })
+  worker.stdout.setEncoding('utf8')
+  worker.stdout.on('data', (data: string) => { inputBuffer += data; const lines = inputBuffer.split('\n'); inputBuffer = lines.pop() || ''; lines.filter(Boolean).forEach(handleWorkerLine) })
+  worker.stderr.on('data', (data) => console.error('[local-asr]', data.toString()))
+  worker.on('error', (err) => { sendToRenderer('transcription-error', `本地 Whisper 启动失败：${err.message}`); cleanup(); reportStopped() })
+  worker.on('exit', () => { if (isTranscribing) { cleanup(); reportStopped() } })
 }
-
-function stopTranscription() {
-  if (!isTranscribing) return
-
-  if (ws && ws.readyState === WebSocket.OPEN && taskId && taskStarted) {
-    const finishTask = {
-      header: {
-        action: 'finish-task',
-        task_id: taskId,
-        streaming: 'duplex'
-      },
-      payload: {
-        input: {}
-      }
-    }
-    ws.send(JSON.stringify(finishTask))
-  }
-
-  isTranscribing = false
-  cleanup()
-  reportStopped()
-}
-
-function handleAudioChunk(chunk: ArrayBuffer) {
-  if (!ws || ws.readyState !== WebSocket.OPEN || !taskStarted) return
-  ws.send(Buffer.from(chunk))
-}
-
-export function getTranscriptionText(): string {
-  return accumulatedText + currentPartial
-}
-
-export function clearTranscriptionText() {
-  accumulatedText = ''
-  currentPartial = ''
-}
-
-ipcMain.handle('start-transcription', (_event, apiKey: string, options?: TranscriptionOptions) => {
-  startTranscription(apiKey, options)
-})
-
-ipcMain.handle('stop-transcription', () => {
-  stopTranscription()
-})
-
-ipcMain.on('transcription-audio-chunk', (_event, chunk: ArrayBuffer) => {
-  handleAudioChunk(chunk)
-})
-
-ipcMain.handle('get-transcription-text', () => {
-  return getTranscriptionText()
-})
-
-ipcMain.handle('clear-transcription-text', () => {
-  clearTranscriptionText()
-})
+function stopTranscription() { if (!isTranscribing) return; if (worker?.stdin.writable) worker.stdin.write(JSON.stringify({ type: 'stop' }) + '\n'); cleanup(); reportStopped() }
+function handleAudioChunk(chunk: ArrayBuffer) { if (!workerReady || !worker?.stdin.writable) return; worker.stdin.write(JSON.stringify({ type: 'audio', pcm16: Buffer.from(chunk).toString('base64') }) + '\n') }
+export function getTranscriptionText(): string { return accumulatedText + currentPartial }
+export function clearTranscriptionText() { accumulatedText = ''; currentPartial = '' }
+ipcMain.handle('start-transcription', (_event, options?: TranscriptionOptions) => startTranscription(options))
+ipcMain.handle('stop-transcription', () => stopTranscription())
+ipcMain.on('transcription-audio-chunk', (_event, chunk: ArrayBuffer) => handleAudioChunk(chunk))
+ipcMain.handle('get-transcription-text', () => getTranscriptionText())
+ipcMain.handle('clear-transcription-text', () => clearTranscriptionText())

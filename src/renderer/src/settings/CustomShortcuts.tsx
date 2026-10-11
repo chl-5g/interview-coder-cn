@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button'
 import ShortcutRenderer from '@/components/ShortcutRenderer'
 import { isModifierKey, getShortcutAccelerator } from '@/lib/utils/keyboard'
 import { useShortcutsStore } from '@/lib/store/shortcuts'
-import { useSettingsStore } from '@/lib/store/settings'
 
 const ShortcutsContext = createContext<{
   recordingAction: string | null
@@ -16,7 +15,6 @@ const ShortcutsContext = createContext<{
 
 export function CustomShortcuts() {
   const { shortcuts, updateShortcut } = useShortcutsStore()
-  const { dashscopeApiKey } = useSettingsStore()
   const [recordingAction, setRecordingAction] = useState<string | null>(null)
 
   const onShortcutChange = useCallback(
@@ -145,13 +143,11 @@ export function CustomShortcuts() {
             label="语音转录"
             description="截图模式：开始/暂停转录；对话模式：开始/停止监听对方说话"
             shortcut="toggleTranscription"
-            disabled={!dashscopeApiKey}
           />
           <Shortcut
             label="清除转录"
             description="截图模式：清除未提交的转录文本；对话模式：清空整段对话和提示"
             shortcut="clearTranscription"
-            disabled={!dashscopeApiKey}
           />
         </div>
 

@@ -1,5 +1,4 @@
 import { useEffect } from 'react'
-import { useSettingsStore } from '@/lib/store/settings'
 import { useTranscriptionStore } from '@/lib/store/transcription'
 import { useSolutionStore } from '@/lib/store/solution'
 import { describeCaptureError, startAudioCapture, stopAudioCapture } from '@/lib/audio-capture'
@@ -12,7 +11,6 @@ import { PrerequisitesChecker } from './PrerequisitesChecker'
 import { TranscriptionBar } from './TranscriptionBar'
 
 export default function CoderPage() {
-  const { dashscopeApiKey } = useSettingsStore()
   const { isTranscribing, setIsTranscribing, setTranscriptionText, clearText } =
     useTranscriptionStore()
   const { setErrorMessage } = useSolutionStore()
@@ -36,13 +34,9 @@ export default function CoderPage() {
         await window.api.stopTranscription()
         setIsTranscribing(false)
       } else {
-        if (!dashscopeApiKey) {
-          setErrorMessage('请先在设置中配置百炼平台 API Key')
-          return
-        }
         try {
           await startAudioCapture()
-          await window.api.startTranscription(dashscopeApiKey)
+          await window.api.startTranscription()
           setIsTranscribing(true)
           setErrorMessage(null)
         } catch (err) {
@@ -57,7 +51,7 @@ export default function CoderPage() {
     return () => {
       window.api.removeToggleTranscriptionListener()
     }
-  }, [isTranscribing, dashscopeApiKey, setIsTranscribing, setErrorMessage])
+  }, [isTranscribing, setIsTranscribing, setErrorMessage])
 
   useEffect(() => {
     window.api.onTranscriptionText((data) => {

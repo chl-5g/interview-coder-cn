@@ -110,7 +110,6 @@ export default function SettingsPage() {
     conversation: (
       <ConversationSection
         onEditProfile={editProfile}
-        onOpenVoice={() => openTab('voice')}
         onOpenKnowledge={() => openTab('knowledge')}
       />
     )

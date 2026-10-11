@@ -11,6 +11,9 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+extraResources:
+  - from: scripts/local_asr_worker.py
+    to: scripts/local_asr_worker.py
 win:
   executableName: 截屏解题助手
 nsis:

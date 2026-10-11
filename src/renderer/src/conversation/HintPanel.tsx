@@ -1,5 +1,4 @@
 import { useEffect, useRef, type ReactNode } from 'react'
-import { useNavigate } from 'react-router'
 import { Brain, Eraser, LoaderCircle, PanelLeftOpen, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -217,9 +216,7 @@ function HintCardView({ card, ref }: { card: HintCard; ref: (el: HTMLElement | n
 }
 
 function EmptyState() {
-  const navigate = useNavigate()
   const { shortcuts } = useShortcutsStore()
-  const dashscopeApiKey = useSettingsStore((state) => state.dashscopeApiKey)
   const hintMode = useSettingsStore((state) => state.conversationHintMode)
   const isTranscribing = useTranscriptionStore((state) => state.isTranscribing)
   const hasUtterances = useConversationStore((state) => state.utterances.length > 0)
@@ -231,16 +228,7 @@ function EmptyState() {
   )
 
   let content: ReactNode
-  if (!dashscopeApiKey) {
-    content = (
-      <>
-        <p>对话模式靠语音识别听对方说话，需要先填写百炼平台 API Key</p>
-        <Button size="sm" variant="secondary" onClick={() => navigate('/settings?tab=voice')}>
-          去设置
-        </Button>
-      </>
-    )
-  } else if (!isTranscribing && !hasUtterances) {
+  if (!isTranscribing && !hasUtterances) {
     content = (
       <>
         <p>按{key('toggleTranscription')}开始监听对方说话</p>

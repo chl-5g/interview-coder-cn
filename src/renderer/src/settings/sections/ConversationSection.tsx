@@ -1,4 +1,4 @@
-import { FileText, Lightbulb, MessagesSquare, TriangleAlert } from 'lucide-react'
+import { FileText, Lightbulb, MessagesSquare } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import {
   Select,
@@ -25,15 +25,12 @@ const MIN_CHARS_OPTIONS = [2, 4, 6, 8]
 
 export function ConversationSection({
   onEditProfile,
-  onOpenVoice,
   onOpenKnowledge
 }: {
   onEditProfile: (id: string) => void
-  onOpenVoice: () => void
   onOpenKnowledge: () => void
 }) {
   const {
-    dashscopeApiKey,
     conversationHintMode,
     conversationSilenceMs,
     conversationMinChars,
@@ -45,19 +42,6 @@ export function ConversationSection({
 
   return (
     <>
-      {!dashscopeApiKey && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-600/40 bg-amber-100/80 px-4 py-2 text-sm text-amber-900">
-          <TriangleAlert className="h-4 w-4 shrink-0" />
-          对话模式靠语音识别听对方说话，需要先填写百炼平台 API Key
-          <button
-            className="ml-auto text-blue-700 hover:underline cursor-pointer"
-            onClick={onOpenVoice}
-          >
-            去填写
-          </button>
-        </div>
-      )}
-
       <SettingsCard Icon={MessagesSquare} title="AI 与提示词">
         <div className="space-y-4">
           <ModeProfileSelect mode="conversation" onEdit={onEditProfile} />

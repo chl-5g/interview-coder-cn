@@ -11,15 +11,11 @@ import { describeCaptureError, startAudioCapture, stopAudioCapture } from '@/lib
  * adjusting something mid-call does not drop what is being said.
  */
 export async function startListening(): Promise<void> {
-  const { dashscopeApiKey, conversationSilenceMs } = useSettingsStore.getState()
+  const { conversationSilenceMs } = useSettingsStore.getState()
   const { setErrorMessage } = useConversationStore.getState()
-  if (!dashscopeApiKey) {
-    setErrorMessage('请先在「设置 → 语音」填写百炼平台 API Key，才能识别对方说话')
-    return
-  }
   try {
     await startAudioCapture()
-    await window.api.startTranscription(dashscopeApiKey, {
+    await window.api.startTranscription({
       purpose: 'conversation',
       maxSentenceSilence: conversationSilenceMs
     })
