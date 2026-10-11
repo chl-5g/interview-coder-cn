@@ -11,9 +11,17 @@ import { describeCaptureError, startAudioCapture, stopAudioCapture } from '@/lib
  * adjusting something mid-call does not drop what is being said.
  */
 export async function startListening(): Promise<void> {
-  const { conversationSilenceMs } = useSettingsStore.getState()
+  const { conversationSilenceMs, conversationHintMode, updateSetting } =
+    useSettingsStore.getState()
   const { setErrorMessage } = useConversationStore.getState()
   try {
+    // Listening is the hands-free conversation workflow.  A previously saved
+    // manual mode used to make the user press "出提示" after every sentence,
+    // which is especially easy to miss during an interview.  Starting the
+    // listener therefore opts this session into automatic hints; the manual
+    // mode remains available from the status bar/settings when explicitly
+    // needed.
+    if (conversationHintMode !== 'auto') updateSetting('conversationHintMode', 'auto')
     await startAudioCapture()
     await window.api.startTranscription({
       purpose: 'conversation',
