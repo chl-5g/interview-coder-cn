@@ -4,6 +4,7 @@ import { isMac } from '@/lib/utils/env'
 let mediaStream: MediaStream | null = null
 let audioContext: AudioContext | null = null
 let processor: ScriptProcessorNode | null = null
+let audioGain: GainNode | null = null
 
 function downsampleAndSend(float32: Float32Array): void {
   const int16 = new Int16Array(float32.length)
@@ -46,6 +47,8 @@ export async function startAudioCapture(): Promise<void> {
   }
 
   mediaStream = stream
+  const track = stream.getAudioTracks()[0]
+  console.info('Electron audio stream', { label: track?.label || 'default', settings: track?.getSettings() })
 
   audioContext = new AudioContext({ sampleRate: 16000 })
 
@@ -62,11 +65,16 @@ export async function startAudioCapture(): Promise<void> {
   const source = audioContext.createMediaStreamSource(new MediaStream(stream.getAudioTracks()))
 
   processor = audioContext.createScriptProcessor(2048, 1, 1)
+  audioGain = audioContext.createGain()
+  audioGain.gain.value = 0
   processor.onaudioprocess = (e) => {
     downsampleAndSend(e.inputBuffer.getChannelData(0))
   }
   source.connect(processor)
-  processor.connect(audioContext.destination)
+  processor.connect(audioGain)
+  audioGain.connect(audioContext.destination)
+  await audioContext.resume()
+  console.info('Electron audio context resumed', { state: audioContext.state })
 }
 
 /**
@@ -85,8 +93,13 @@ export function describeCaptureError(failure: string, err: unknown): string {
 
 export function stopAudioCapture(): void {
   if (processor) {
+    processor.onaudioprocess = null
     processor.disconnect()
     processor = null
+  }
+  if (audioGain) {
+    audioGain.disconnect()
+    audioGain = null
   }
   if (audioContext) {
     audioContext.close()

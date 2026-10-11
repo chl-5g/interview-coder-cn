@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
