@@ -286,7 +286,6 @@ interface Settings {
   /** 把 AI 生成的代码自动复制到系统剪贴板 */
   codeCopyToClipboard: boolean
 
-  dashscopeApiKey: string
 
   hideDockIcon: boolean
 
@@ -408,7 +407,6 @@ const defaultSettings: Settings = {
   codeNamingMode: 'sequence',
   codeCopyToClipboard: false,
 
-  dashscopeApiKey: '',
 
   hideDockIcon: false,
 

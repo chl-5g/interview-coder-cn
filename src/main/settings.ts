@@ -119,7 +119,6 @@ export const settings = {
   codeNamingMode: 'sequence' as 'sequence' | 'overwrite',
   /** Copy the code block of a finished answer to the system clipboard */
   codeCopyToClipboard: false,
-  dashscopeApiKey: '',
   hideDockIcon: false,
   audioInputDeviceId: '',
   audioOutputDeviceId: ''
