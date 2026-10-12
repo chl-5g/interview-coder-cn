@@ -89,49 +89,85 @@ def main():
         emit({"type": "error", "message": f"本地 Whisper 加载失败：{exc}"})
         return 2
 
-    buffer = bytearray()
-    chunk_bytes = int(16000 * 2 * args.chunk_ms / 1000)
+    # Segment on local speech activity instead of blindly transcribing every
+    # fixed window.  This is the important part of Jarvis's pipeline: Whisper
+    # sees a complete phrase with its context, not half a sentence plus
+    # silence.  20 ms frames are enough for a lightweight VAD on the worker.
+    frame_samples = 320  # 20 ms at 16 kHz
+    pre_roll: list[np.ndarray] = []
+    speech: list[np.ndarray] = []
+    in_speech = False
+    silence_ms = 0
+    max_speech_ms = 12000
+    end_silence_ms = 650
+
+    def transcribe_segment(audio):
+        if len(audio) < int(16000 * 0.25) or not is_speech_like(audio):
+            return
+        if backend == "mlx":
+            result = mlx_whisper.transcribe(
+                audio,
+                path_or_hf_repo=args.model,
+                fp16=True,
+                language="zh",
+                condition_on_previous_text=False,
+                no_speech_threshold=0.7,
+                compression_ratio_threshold=2.0,
+                hallucination_silence_threshold=1,
+                initial_prompt="Java、HashMap、TreeMap、ConcurrentHashMap、并发、线程、线程安全、线程池、锁、数据库、接口、API。",
+            )
+            text = str(result.get("text", "")).strip()
+        else:
+            segments, _ = model.transcribe(
+                audio,
+                language="zh",
+                beam_size=5,
+                vad_filter=True,
+                condition_on_previous_text=False,
+                initial_prompt="Java、HashMap、TreeMap、ConcurrentHashMap、并发、线程、线程安全、线程池、锁、数据库、接口、API。",
+                hotwords="Java, HashMap, TreeMap, ConcurrentHashMap, synchronized, volatile, 并发, 线程, 线程安全, 线程池, 锁",
+            )
+            text = "".join(seg.text.strip() for seg in segments).strip()
+        text = clean_transcript(text, convert_to_simplified)
+        if text and not is_hallucination_like(text):
+            emit({"type": "result", "text": text, "final": True})
+
     for line in sys.stdin:
-            try:
-                msg = json.loads(line)
-                if msg.get("type") == "stop":
-                    break
-                if msg.get("type") != "audio":
-                    continue
-                buffer.extend(base64.b64decode(msg["pcm16"]))
-                while len(buffer) >= chunk_bytes:
-                    chunk = bytes(buffer[:chunk_bytes])
-                    del buffer[:chunk_bytes]
-                    audio = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
-                    if not is_speech_like(audio):
-                        continue
-                    if backend == "mlx":
-                        result = mlx_whisper.transcribe(
-                            audio,
-                            path_or_hf_repo=args.model,
-                            fp16=True,
-                            language="zh",
-                            condition_on_previous_text=False,
-                            hallucination_silence_threshold=1,
-                            initial_prompt="Java、HashMap、TreeMap、ConcurrentHashMap、并发、线程、锁、数据库、接口、API。",
-                        )
-                        text = str(result.get("text", "")).strip()
-                    else:
-                        segments, _ = model.transcribe(
-                            audio,
-                            language="zh",
-                            beam_size=5,
-                            vad_filter=True,
-                            condition_on_previous_text=False,
-                            initial_prompt="Java、HashMap、TreeMap、ConcurrentHashMap、并发、线程、锁、数据库、接口、API。",
-                            hotwords="Java, HashMap, TreeMap, ConcurrentHashMap, synchronized, volatile, 并发, 线程, 锁",
-                        )
-                        text = "".join(seg.text.strip() for seg in segments).strip()
-                    text = clean_transcript(text, convert_to_simplified)
-                    if text and not is_hallucination_like(text):
-                        emit({"type": "result", "text": text, "final": True})
-            except Exception as exc:
-                emit({"type": "error", "message": f"本地 Whisper 转写失败：{exc}"})
+        try:
+            msg = json.loads(line)
+            if msg.get("type") == "stop":
+                break
+            if msg.get("type") != "audio":
+                continue
+            samples = np.frombuffer(base64.b64decode(msg["pcm16"]), dtype=np.int16).astype(np.float32) / 32768.0
+            for start in range(0, len(samples) - frame_samples + 1, frame_samples):
+                frame = samples[start : start + frame_samples]
+                active = is_speech_like(frame)
+                if active:
+                    if not in_speech:
+                        speech = list(pre_roll)
+                        in_speech = True
+                    speech.append(frame)
+                    silence_ms = 0
+                elif in_speech:
+                    speech.append(frame)
+                    silence_ms += 20
+                    if silence_ms >= end_silence_ms or len(speech) * 1000 / 16000 >= max_speech_ms:
+                        transcribe_segment(np.concatenate(speech))
+                        speech = []
+                        in_speech = False
+                        silence_ms = 0
+                pre_roll.append(frame)
+                if len(pre_roll) > 10:
+                    pre_roll.pop(0)
+        except Exception as exc:
+            emit({"type": "error", "message": f"本地 Whisper 转写失败：{exc}"})
+
+    if speech:
+        try:
+            transcribe_segment(np.concatenate(speech))
+        except Exception as exc:
+            emit({"type": "error", "message": f"本地 Whisper 转写失败：{exc}"})
 
     return 0
 
