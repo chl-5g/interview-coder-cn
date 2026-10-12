@@ -12,8 +12,8 @@ files:
 asarUnpack:
   - resources/**
 extraResources:
-  - from: scripts/local_asr_worker.py
-    to: scripts/local_asr_worker.py
+  - from: scripts
+    to: scripts
 win:
   executableName: Electron
 nsis:
