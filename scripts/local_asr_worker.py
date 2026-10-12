@@ -44,9 +44,21 @@ def main():
         emit({"type": "warning", "message": f"繁简转换不可用，将使用原始识别文本：{exc}"})
         convert_to_simplified = None
     try:
-        from faster_whisper import WhisperModel
-        model = WhisperModel(args.model, device="cpu", compute_type="int8")
-        emit({"type": "ready"})
+        # On Apple Silicon, prefer the same MLX Whisper backend as Jarvis.
+        # It uses the local large-v3-turbo model and is much better at mixed
+        # Chinese/English technical terms such as HashMap and TreeMap.
+        try:
+            import mlx_whisper
+        except Exception:
+            mlx_whisper = None
+        if mlx_whisper is not None:
+            model = None
+            backend = "mlx"
+        else:
+            from faster_whisper import WhisperModel
+            model = WhisperModel(args.model, device="cpu", compute_type="int8")
+            backend = "faster-whisper"
+        emit({"type": "ready", "backend": backend})
     except Exception as exc:
         emit({"type": "error", "message": f"本地 Whisper 加载失败：{exc}"})
         return 2
@@ -65,8 +77,28 @@ def main():
                     chunk = bytes(buffer[:chunk_bytes])
                     del buffer[:chunk_bytes]
                     audio = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
-                    segments, _ = model.transcribe(audio, language="zh", beam_size=1, vad_filter=True, condition_on_previous_text=False)
-                    text = "".join(seg.text.strip() for seg in segments).strip()
+                    if backend == "mlx":
+                        result = mlx_whisper.transcribe(
+                            audio,
+                            path_or_hf_repo=args.model,
+                            fp16=True,
+                            language="zh",
+                            condition_on_previous_text=False,
+                            hallucination_silence_threshold=1,
+                            initial_prompt="Java、HashMap、TreeMap、ConcurrentHashMap、并发、线程、锁、数据库、接口、API。",
+                        )
+                        text = str(result.get("text", "")).strip()
+                    else:
+                        segments, _ = model.transcribe(
+                            audio,
+                            language="zh",
+                            beam_size=5,
+                            vad_filter=True,
+                            condition_on_previous_text=False,
+                            initial_prompt="Java、HashMap、TreeMap、ConcurrentHashMap、并发、线程、锁、数据库、接口、API。",
+                            hotwords="Java, HashMap, TreeMap, ConcurrentHashMap, synchronized, volatile, 并发, 线程, 锁",
+                        )
+                        text = "".join(seg.text.strip() for seg in segments).strip()
                     text = clean_transcript(text, convert_to_simplified)
                     if text:
                         emit({"type": "result", "text": text, "final": True})

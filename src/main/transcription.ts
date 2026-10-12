@@ -28,11 +28,20 @@ function sendToRenderer(channel: string, ...args: unknown[]) {
 }
 function reportStopped() { sendToRenderer('transcription-stopped'); endListeners.forEach((listener) => listener()) }
 function resolvePython(): string {
-  const candidates = [process.env.INTERVIEW_CODER_PYTHON, join(homedir(), 'fujian-social-insurance-assistant/.venv-voice/bin/python'), 'python3'].filter(Boolean) as string[]
+  const candidates = [
+    process.env.INTERVIEW_CODER_PYTHON,
+    join(homedir(), 'Documents/Codex/2026-10-05/ni/work/jarvis-venv/bin/python'),
+    join(homedir(), 'fujian-social-insurance-assistant/.venv-voice/bin/python'),
+    'python3'
+  ].filter(Boolean) as string[]
   return candidates.find((p) => p === 'python3' || existsSync(p)) || 'python3'
 }
 function resolveModel(): string | null {
-  const candidates = [process.env.INTERVIEW_CODER_WHISPER_MODEL, join(homedir(), 'fujian-social-insurance-assistant/data/voice-models/whisper-small')].filter(Boolean) as string[]
+  const candidates = [
+    process.env.INTERVIEW_CODER_WHISPER_MODEL,
+    join(homedir(), 'jarvis-codex/models/whisper'),
+    join(homedir(), 'fujian-social-insurance-assistant/data/voice-models/whisper-small')
+  ].filter(Boolean) as string[]
   return candidates.find((p) => existsSync(p)) || null
 }
 function getWorkerScript(): string {
