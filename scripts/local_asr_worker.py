@@ -24,6 +24,32 @@ def clean_transcript(text, convert_to_simplified):
     return text.strip()
 
 
+def is_speech_like(audio):
+    """Cheap guard for silence/noise before Whisper sees a short live chunk."""
+    if not audio.size:
+        return False
+    rms = float(np.sqrt(np.mean(np.square(audio))))
+    peak = float(np.max(np.abs(audio)))
+    # Whisper is prone to inventing repeated text for quiet 3.5s windows.
+    # Keep a little headroom for a quiet microphone, while rejecting the usual
+    # digital silence and room-noise floor.
+    return rms >= 0.004 or peak >= 0.025
+
+
+def is_hallucination_like(text):
+    compact = re.sub(r"\s+", "", text)
+    if len(compact) > 120:
+        unique_ratio = len(set(compact)) / max(1, len(compact))
+        if unique_ratio < 0.45:
+            return True
+    # Repeated characters/short tokens are a common Whisper silence failure.
+    if re.search(r"(.{1,12})\1{3,}", compact):
+        return True
+    if re.search(r"(.)\1{5,}", compact):
+        return True
+    return False
+
+
 def emit(obj):
     sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
     sys.stdout.flush()
@@ -77,6 +103,8 @@ def main():
                     chunk = bytes(buffer[:chunk_bytes])
                     del buffer[:chunk_bytes]
                     audio = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+                    if not is_speech_like(audio):
+                        continue
                     if backend == "mlx":
                         result = mlx_whisper.transcribe(
                             audio,
@@ -100,7 +128,7 @@ def main():
                         )
                         text = "".join(seg.text.strip() for seg in segments).strip()
                     text = clean_transcript(text, convert_to_simplified)
-                    if text:
+                    if text and not is_hallucination_like(text):
                         emit({"type": "result", "text": text, "final": True})
             except Exception as exc:
                 emit({"type": "error", "message": f"本地 Whisper 转写失败：{exc}"})
