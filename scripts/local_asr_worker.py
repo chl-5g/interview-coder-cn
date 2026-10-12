@@ -98,10 +98,11 @@ def main():
     speech: list[np.ndarray] = []
     in_speech = False
     silence_ms = 0
+    last_partial_ms = 0
     max_speech_ms = 12000
     end_silence_ms = 650
 
-    def transcribe_segment(audio):
+    def transcribe_segment(audio, final=True):
         if len(audio) < int(16000 * 0.25) or not is_speech_like(audio):
             return
         if backend == "mlx":
@@ -130,7 +131,7 @@ def main():
             text = "".join(seg.text.strip() for seg in segments).strip()
         text = clean_transcript(text, convert_to_simplified)
         if text and not is_hallucination_like(text):
-            emit({"type": "result", "text": text, "final": True})
+            emit({"type": "result", "text": text, "final": final})
 
     for line in sys.stdin:
         try:
@@ -149,6 +150,10 @@ def main():
                         in_speech = True
                     speech.append(frame)
                     silence_ms = 0
+                    speech_ms = len(speech) * 1000 / 16000
+                    if speech_ms >= 800 and speech_ms - last_partial_ms >= 1000:
+                        transcribe_segment(np.concatenate(speech), final=False)
+                        last_partial_ms = speech_ms
                 elif in_speech:
                     speech.append(frame)
                     silence_ms += 20
@@ -157,6 +162,7 @@ def main():
                         speech = []
                         in_speech = False
                         silence_ms = 0
+                        last_partial_ms = 0
                 pre_roll.append(frame)
                 if len(pre_roll) > 10:
                     pre_roll.pop(0)
